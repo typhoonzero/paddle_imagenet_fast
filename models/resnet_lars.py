@@ -37,14 +37,15 @@ train_parameters = {
     "input_std": [0.229, 0.224, 0.225],
     "learning_strategy": {
         "name": "piecewise_decay",
-        "batch_size": 256,
-        "epochs": [30, 60, 90],
+        "weight_decay": 1e-4,
+        "batch_size": 32,  # per GPU
+        "epochs": [30, 60, 80],
         "steps": [0.1, 0.01, 0.001, 0.0001]
     }
 }
 
+WEIGHT_DECAY = train_parameters["learning_strategy"]["weight_decay"]
 BN_NO_DECAY = bool(os.getenv("BN_NO_DECAY", "0"))
-# param_attr=None if BN_NO_DECAY else fluid.ParamAttr(regularizer=fluid.regularizer.L2Decay(1e-4))
 
 def lr_warmup(learning_rate, warmup_steps, start_lr, end_lr):
     # increase lr in warmup_steps
@@ -120,7 +121,7 @@ class ResNet():
                               param_attr=fluid.param_attr.ParamAttr(
                                   initializer=fluid.initializer.Uniform(-stdv,
                                                                         stdv),
-                                  regularizer=fluid.regularizer.L2Decay(1e-4)))
+                                  regularizer=fluid.regularizer.L2Decay(WEIGHT_DECAY)))
         return out
 
     def conv_bn_layer(self,
@@ -129,7 +130,8 @@ class ResNet():
                       filter_size,
                       stride=1,
                       groups=1,
-                      act=None):
+                      act=None,
+                      bn_init_value=1.0):
         conv = fluid.layers.conv2d(
             input=input,
             num_filters=num_filters,
@@ -139,10 +141,12 @@ class ResNet():
             groups=groups,
             act=None,
             bias_attr=False,
-            param_attr=fluid.ParamAttr(regularizer=fluid.regularizer.L2Decay(1e-4)))
+            param_attr=fluid.ParamAttr(regularizer=fluid.regularizer.L2Decay(WEIGHT_DECAY)))
         return fluid.layers.batch_norm(
-            input=conv, act=act, is_test=not self.is_train,
-            param_attr=None if BN_NO_DECAY else fluid.ParamAttr(regularizer=fluid.regularizer.L2Decay(1e-4)))
+                input=conv, act=act, is_test=not self.is_train,
+                param_attr=fluid.ParamAttr(
+                    initializer=fluid.initializer.Constant(bn_init_value),
+                    regularizer=None if BN_NO_DECAY else fluid.regularizer.L2Decay(WEIGHT_DECAY)))
 
     def shortcut(self, input, ch_out, stride):
         ch_in = input.shape[1]
@@ -161,7 +165,7 @@ class ResNet():
             stride=stride,
             act='relu')
         conv2 = self.conv_bn_layer(
-            input=conv1, num_filters=num_filters * 4, filter_size=1, act=None)
+            input=conv1, num_filters=num_filters * 4, filter_size=1, act=None, bn_init_value=0.0)
 
         short = self.shortcut(input, num_filters * 4, stride)
 
