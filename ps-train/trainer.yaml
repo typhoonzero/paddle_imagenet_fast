@@ -1,0 +1,85 @@
+apiVersion: batch/v1
+kind: Job
+metadata: {name: wuyi-ps-resnet-imgnet-trainer}
+spec:
+  completions: 4
+  parallelism: 4
+  template:
+    metadata:
+      labels: {paddle-job: wuyi-ps-resnet-imgnet}
+    spec:
+      nodeSelector:
+        wuyinode: "1"
+      containers:
+      - command: [paddle_k8s, start_fluid]
+        env:
+        - {name: GLOG_v, value: '0'}
+        - {name: GLOG_logtostderr, value: '1'}
+        #- {name: GLOG_vmodule, value: 'executor=4,operator=4'}
+        - {name: TOPOLOGY, value: ''}
+        - {name: TRAINER_PACKAGE, value: /workspace}
+        - {name: PADDLE_INIT_NICS, value: eth2}
+        - {name: FLAGS_fraction_of_gpu_memory_to_use, value: "0.92"}
+        - name: NAMESPACE
+          valueFrom:
+            fieldRef: {fieldPath: metadata.namespace}
+        - name: POD_IP
+          valueFrom:
+            fieldRef: {fieldPath: status.podIP}
+        - name: PADDLE_CURRENT_IP
+          valueFrom:
+            fieldRef: {fieldPath: status.podIP}
+        - {name: PADDLE_JOB_NAME, value: wuyi-ps-resnet-imgnet}
+        - {name: PADDLE_TRAINERS, value: '4'}
+        - {name: PADDLE_PSERVERS, value: '4'}
+        - {name: FLAGS_rpc_deadline, value: '36000000'}
+        - {name: ENTRY, value: cd /workspace && unset http_proxy && unset https_proxy && NCCL_SOCKET_IFNAME=eth2 NCCL_IB_DISABLE=0
+            NCCL_IB_GID_INDEX=3 NCCL_DEBUG=INFO python fast_imagenet_train.py --model
+            resnet_lars --data_set imagenet --gpus 8 --cpus 2 --update_method pserver --iterations
+            -1 --batch_size 32 --pass_num 120 --data_path /mnt/ImageNet --test_data_path
+            /mnt/ImageNet --learning_rate 0.1 --use_reader_op --memory_optimize}
+        - {name: PADDLE_PSERVER_PORT, value: '30236'}
+        - {name: LD_LIBRARY_PATH, value: '/usr/local/lib:/usr/local/nvidia/lib64:/usr/local/rdma/lib64:/usr/lib64/mlnx_ofed/valgrind'}
+        - {name: PADDLE_TRAINING_ROLE, value: TRAINER}
+        image: bootstrapper:5000/fluid_benchmark:gpu
+        imagePullPolicy: Always
+        name: trainer
+        ports:
+        - {containerPort: 41092, name: spr-41092}
+        resources:
+          limits: {alpha.kubernetes.io/nvidia-gpu: '8', cpu: '20', memory: 150Gi}
+          requests: {alpha.kubernetes.io/nvidia-gpu: '8', cpu: '10', memory: 150Gi}
+        securityContext: {privileged: true}
+        volumeMounts:
+        - {mountPath: /usr/local/nvidia/lib64, name: nvidia-driver}
+        - {mountPath: /etc/libibverbs.d, name: ibetc}
+        - {mountPath: /usr/local/rdma, name: iblibs}
+        - {mountPath: /usr/lib64/mlnx_ofed/valgrind, name: valgrind}
+        - {mountPath: /dev/shm, name: dshm}
+        - {mountPath: /mnt/data, name: ceph-data}
+        - {mountPath: /mnt/ImageNet, name: imagenet}
+        - {mountPath: /mnt/seqdata, name: seqdata}
+      hostNetwork: true
+      imagePullSecrets:
+      - {name: job-registry-secret}
+      restartPolicy: Never
+      volumes:
+      - hostPath: {path: /usr/local/nvidia/lib64}
+        name: nvidia-driver
+      - hostPath: {path: /etc/libibverbs.d}
+        name: ibetc
+      - hostPath: {path: /usr/local/rdma}
+        name: iblibs
+      - hostPath: {path: /usr/lib64/mlnx_ofed/valgrind}
+        name: valgrind
+      - emptyDir: {medium: Memory}
+        name: dshm
+      - hostPath: {path: /home/work/wuyi/ImageNet}
+        name: imagenet
+      - hostPath: {path: /home/work/wuyi/seqdata}
+        name: seqdata
+      - cephfs:
+          monitors: ['192.168.16.23:6789']
+          secretRef: {name: ceph-secret}
+          user: admin
+        name: ceph-data
