@@ -32,6 +32,8 @@ def parse_args():
         help='The model to run benchmark with.')
     parser.add_argument(
         '--batch_size', type=int, default=32, help='The minibatch size.')
+    parser.add_argument(
+        '--multi_batch_repeat', type=int, default=1, help='run multiple batches on a single GPU and merge.')
     #  args related to learning rate
     parser.add_argument(
         '--learning_rate', type=float, default=0.001, help='The learning rate.')

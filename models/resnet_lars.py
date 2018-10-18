@@ -45,7 +45,7 @@ train_parameters = {
 }
 
 WEIGHT_DECAY = train_parameters["learning_strategy"]["weight_decay"]
-BN_NO_DECAY = bool(os.getenv("BN_NO_DECAY", "0"))
+BN_NO_DECAY = bool(os.getenv("BN_NO_DECAY", "1"))
 
 def lr_warmup(learning_rate, warmup_steps, start_lr, end_lr):
     # increase lr in warmup_steps
@@ -71,9 +71,6 @@ def lr_warmup(learning_rate, warmup_steps, start_lr, end_lr):
                 fluid.layers.tensor.assign(learning_rate, lr)
 
         return lr
-
-
-
 
 
 class ResNet():
@@ -118,10 +115,13 @@ class ResNet():
         out = fluid.layers.fc(input=pool,
                               size=class_dim,
                               act='softmax',
-                              param_attr=fluid.param_attr.ParamAttr(
+                              param_attr=fluid.ParamAttr(
                                   initializer=fluid.initializer.Uniform(-stdv,
                                                                         stdv),
-                                  regularizer=fluid.regularizer.L2Decay(WEIGHT_DECAY)))
+                                  regularizer=fluid.regularizer.L2Decay(WEIGHT_DECAY)),
+                              bias_attr=fluid.ParamAttr(
+                                  regularizer=fluid.regularizer.L2Decay(WEIGHT_DECAY))
+                              )
         return out
 
     def conv_bn_layer(self,
@@ -164,6 +164,7 @@ class ResNet():
             filter_size=3,
             stride=stride,
             act='relu')
+        # NOTE: default bias is 0.0 already
         conv2 = self.conv_bn_layer(
             input=conv1, num_filters=num_filters * 4, filter_size=1, act=None, bn_init_value=0.0)
 
@@ -196,16 +197,11 @@ def _model_reader_dshape_classdim(args, is_train):
                 "Must specify --data_path when training with imagenet")
         if not args.use_reader_op:
             if is_train:
-                #reader = train()
-                #reader = reader_fast.create_imagenet_afs_rawdatareader("train", "imagenet", cachefolder="./data_cache")
                 reader = reader_fast.create_imagenet_local_rawdatareader("train", "imagenet")
                 reader = reader_fast.transform_reader("train", reader)
                 reader = reader_fast.create_threaded_reader(reader)
             else:
                 reader = val()
-                #reader = reader_fast.create_imagenet_local_datareader("val", "imagenet")
-                #reader = reader_fast.transform_reader("val", reader)
-                #reader = reader_fast.create_threaded_reader(reader)
         else:
             if is_train:
                 #reader = train()
@@ -214,9 +210,6 @@ def _model_reader_dshape_classdim(args, is_train):
                 reader = reader_fast.create_threaded_reader(reader)
             else:
                 reader = val()
-                #reader = reader_fast.create_imagenet_local_datareader("val", "imagenet")
-                #reader = reader_fast.transform_reader("val", reader)
-                #reader = reader_fast.create_threaded_reader(reader)
     return reader, dshape, class_dim
 
 
@@ -253,7 +246,8 @@ def get_model(args, is_train, main_prog, startup_prog):
             optimizer = None
             if is_train:
                 start_lr = args.learning_rate
-                end_lr = args.learning_rate * 4
+                # n * worker * repeat
+                end_lr = args.learning_rate * 4 * args.multi_batch_repeat
                 total_images = 1281167 / trainer_count
                 step = int(total_images / (args.batch_size * args.gpus) + 1)
                 warmup_steps = step * 5  # warmup 5 passes
@@ -289,4 +283,3 @@ def get_model(args, is_train, main_prog, startup_prog):
 
     return avg_cost, optimizer, [batch_acc1,
                                  batch_acc5], reader, pyreader
-

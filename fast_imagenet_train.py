@@ -27,9 +27,6 @@ import paddle.fluid.profiler as profiler
 
 from args import *
 
-print("LD_LIBRARY_PATH: ", os.getenv("LD_LIBRARY_PATH"))
-
-
 def append_nccl2_prepare(trainer_id, startup_prog):
     if trainer_id >= 0:
         # append gen_nccl_id at the end of startup program
@@ -135,6 +132,35 @@ def test_parallel(exe, test_args, args, test_prog, feeder):
 
     return [e.eval() for e in acc_evaluators]
 
+def test_single(exe, test_args, args, test_prog, feeder):
+    acc_evaluators = []
+    for i in xrange(len(test_args[2])):
+        acc_evaluators.append(fluid.metrics.Accuracy())
+
+    to_fetch = [v.name for v in test_args[2]]
+    # to_fetch.append("batch_norm_20.w_1")
+    # to_fetch.append("batch_norm_0.w_1")
+    # var = fluid.global_scope().find_var("batch_norm_0.w_1")
+    # print("batch_norm_0.w_1", fluid.executor.as_numpy(var.get_tensor()))
+
+    if args.use_reader_op:
+        test_args[4].start()
+        while True:
+            try:
+                acc_rets = exe.run(program=test_prog, fetch_list=to_fetch)
+                for i, e in enumerate(acc_evaluators):
+                    e.update(
+                        value=np.array(acc_rets[i]), weight=args.batch_size)
+            except fluid.core.EOFException as eof:
+                test_args[4].reset()
+                break
+    else:
+        for batch_id, data in enumerate(test_args[3]()):
+            acc_rets = exe.run(feed=feeder.feed(data), fetch_list=to_fetch)
+            for i, e in enumerate(acc_evaluators):
+                e.update(value=np.array(acc_rets[i]), weight=len(data))
+
+    return [e.eval() for e in acc_evaluators]
 
 # NOTE: only need to benchmark using parallelexe
 def train_parallel(train_args, test_args, args, train_prog, test_prog,
@@ -158,6 +184,9 @@ def train_parallel(train_args, test_args, args, train_prog, test_prog,
     strategy = fluid.ExecutionStrategy()
     strategy.num_threads = args.cpus
     strategy.allow_op_delay = False
+
+    build_st = fluid.BuildStrategy()
+    build_st.multi_batch_merge_repeats = args.multi_batch_repeat
     avg_loss = train_args[0]
 
     if args.update_method == "pserver":
@@ -172,6 +201,7 @@ def train_parallel(train_args, test_args, args, train_prog, test_prog,
         avg_loss.name,
         main_program=train_prog,
         exec_strategy=strategy,
+        build_strategy=build_st,
         num_trainers=num_trainers,
         trainer_id=trainer_id)
 
@@ -257,9 +287,10 @@ def train_parallel(train_args, test_args, args, train_prog, test_prog,
                     if var.is_data
                 ]
                 test_feeder = fluid.DataFeeder(test_feed_var_list, place)
-            if pass_id > 80:  # test only after pass 80
-                test_ret = test_parallel(test_exe, test_args, args, test_prog,
-                                     test_feeder)
+            if pass_id >= 80:  # test only after pass 80 and ever 10 pass
+                #test_ret = test_parallel(test_exe, test_args, args, test_prog,
+                #                     test_feeder)
+                test_ret = test_single(startup_exe, test_args, args, test_prog, test_feeder)
                 print("Pass: %d, Test Accuracy: %s\n" %
                     (pass_id, [np.mean(np.array(v)) for v in test_ret]))
 
