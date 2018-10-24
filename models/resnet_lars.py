@@ -199,7 +199,7 @@ def _model_reader_dshape_classdim(args, is_train):
             if is_train:
                 reader = reader_fast.create_imagenet_local_rawdatareader("train", "imagenet")
                 reader = reader_fast.transform_reader("train", reader)
-                reader = reader_fast.create_threaded_reader(reader)
+                # reader = reader_fast.create_threaded_reader(reader)
             else:
                 reader = val()
         else:
@@ -207,7 +207,7 @@ def _model_reader_dshape_classdim(args, is_train):
                 #reader = train()
                 reader = reader_fast.create_imagenet_local_rawdatareader("train", "imagenet")
                 reader = reader_fast.transform_reader("train", reader)
-                reader = reader_fast.create_threaded_reader(reader)
+                # reader = reader_fast.create_threaded_reader(reader)
             else:
                 reader = val()
     return reader, dshape, class_dim
@@ -224,7 +224,7 @@ def get_model(args, is_train, main_prog, startup_prog):
                 pyreader = fluid.layers.py_reader(
                     capacity=args.batch_size * args.gpus,
                     shapes=([-1] + dshape, (-1, 1)),
-                    dtypes=('float32', 'int64'),
+                    dtypes=('uint8', 'int64'),
                     name="train_reader" if is_train else "test_reader",
                     use_double_buffer=True)
                 input, label = fluid.layers.read_file(pyreader)
@@ -235,7 +235,17 @@ def get_model(args, is_train, main_prog, startup_prog):
                     name='label', shape=[1], dtype='int64')
 
             model = ResNet(is_train=is_train)
-            predict = model.net(input, class_dim=class_dim)
+            cast = fluid.layers.cast(input, "float32")
+            # setup values when run startup
+            img_mean = fluid.layers.create_global_var([3, 1, 1], 0.0, "float32", name="img_mean", persistable=True)
+            img_std = fluid.layers.create_global_var([3, 1, 1], 0.0, "float32", name="img_std", persistable=True)
+
+            # img_mean_np = np.array([0.485, 0.456, 0.406]).reshape((3, 1, 1))
+            # img_std_np = np.array([0.229, 0.224, 0.225]).reshape((3, 1, 1))
+            t1 = fluid.layers.elementwise_sub(cast / 255.0, img_mean, axis=1)
+            t2 = fluid.layers.elementwise_div(t1, img_std, axis=1)
+            
+            predict = model.net(t2, class_dim=class_dim)
             cost = fluid.layers.cross_entropy(input=predict, label=label)
             avg_cost = fluid.layers.mean(x=cost)
 
@@ -247,22 +257,31 @@ def get_model(args, is_train, main_prog, startup_prog):
             if is_train:
                 start_lr = args.learning_rate
                 # n * worker * repeat
-                end_lr = args.learning_rate * 4 * args.multi_batch_repeat
+                end_lr = args.learning_rate * trainer_count * args.multi_batch_repeat
                 total_images = 1281167 / trainer_count
-                step = int(total_images / (args.batch_size * args.gpus) + 1)
+                step = int(total_images / (args.batch_size * args.gpus * args.multi_batch_repeat) + 1)
                 warmup_steps = step * 5  # warmup 5 passes
                 epochs = [30, 60, 80]
                 bd = [step * e for e in epochs]
                 base_lr = end_lr
                 lr = []
                 lr = [base_lr * (0.1**i) for i in range(len(bd) + 1)]
-                optimizer = fluid.optimizer.Momentum(
-                    learning_rate=lr_warmup(fluid.layers.piecewise_decay(
-                            boundaries=bd, values=lr),
-                        warmup_steps, start_lr, end_lr),
-                    momentum=0.9,
-                    #lars_weight_decay=1e-4)
-                    regularization=fluid.regularizer.L2Decay(1e-4))
+                if args.use_lars:
+                    optimizer = fluid.optimizer.LarsMomentum(
+                        learning_rate=lr_warmup(fluid.layers.piecewise_decay(
+                                boundaries=bd, values=lr),
+                            warmup_steps, start_lr, end_lr),
+                        momentum=0.9,
+                        lars_weight_decay=1e-4)
+                        # regularization=fluid.regularizer.L2Decay(1e-4))
+                else:
+                    optimizer = fluid.optimizer.Momentum(
+                        learning_rate=lr_warmup(fluid.layers.piecewise_decay(
+                                boundaries=bd, values=lr),
+                            warmup_steps, start_lr, end_lr),
+                        momentum=0.9,
+                        #lars_weight_decay=1e-4)
+                        regularization=fluid.regularizer.L2Decay(1e-4))
                 optimizer.minimize(avg_cost)
 
 
@@ -275,11 +294,18 @@ def get_model(args, is_train, main_prog, startup_prog):
             drop_last=True)
     else:
         batched_reader = None
-        pyreader.decorate_paddle_reader(
-            paddle.batch(
-                reader if args.no_random else paddle.reader.shuffle(
-                    reader, buf_size=5120),
-                batch_size=args.batch_size))
+        # pyreader.decorate_paddle_reader(
+        #     paddle.batch(
+        #         reader if args.no_random else paddle.reader.shuffle(
+        #             reader, buf_size=5120),
+        #         batch_size=args.batch_size))
+
+        pyreader.decorate_tensor_provider(
+            reader_fast.batch_feeder(
+                paddle.batch(reader, batch_size=args.batch_size),
+                pin_memory=True
+            )
+        )
 
     return avg_cost, optimizer, [batch_acc1,
                                  batch_acc5], reader, pyreader

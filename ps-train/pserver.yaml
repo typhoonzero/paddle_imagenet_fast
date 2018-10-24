@@ -1,14 +1,14 @@
 apiVersion: extensions/v1beta1
 kind: ReplicaSet
-metadata: {name: wuyi-ps-resnet-imgnet-pserver}
+metadata: {name: ps-imagenet-bs32-pserver}
 spec:
   replicas: 4
   template:
     metadata:
-      labels: {paddle-job-pserver: wuyi-ps-resnet-imgnet}
+      labels: {paddle-job-pserver: ps-imagenet-bs32}
     spec:
       nodeSelector:
-        wuyinode: "1"
+        wuyinode: "2"
       containers:
       - command: [paddle_k8s, start_fluid]
         env:
@@ -26,7 +26,7 @@ spec:
         - name: PADDLE_CURRENT_IP
           valueFrom:
             fieldRef: {fieldPath: status.podIP}
-        - {name: PADDLE_JOB_NAME, value: wuyi-ps-resnet-imgnet}
+        - {name: PADDLE_JOB_NAME, value: ps-imagenet-bs32}
         - {name: PADDLE_TRAINERS, value: '4'}
         - {name: PADDLE_PSERVERS, value: '4'}
         - {name: FLAGS_rpc_deadline, value: '36000000'}
@@ -34,7 +34,7 @@ spec:
             NCCL_IB_GID_INDEX=3 NCCL_DEBUG=INFO python fast_imagenet_train.py --model
             resnet_lars --data_set imagenet --gpus 8 --update_method pserver --iterations
             -1 --batch_size 32 --pass_num 120 --data_path /mnt/ImageNet --test_data_path
-            /mnt/ImageNet --learning_rate 0.1 --memory_optimize}
+            /mnt/ImageNet --learning_rate 0.1  --multi_batch_repeat 4}
         - {name: PADDLE_PSERVER_PORT, value: '30236'}
         - {name: LD_LIBRARY_PATH, value: '/usr/local/lib:/usr/local/nvidia/lib64:/usr/local/rdma/lib64:/usr/lib64/mlnx_ofed/valgrind'}
         - {name: PADDLE_TRAINING_ROLE, value: PSERVER}

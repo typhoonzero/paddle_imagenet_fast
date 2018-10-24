@@ -162,25 +162,59 @@ def test_single(exe, test_args, args, test_prog, feeder):
 
     return [e.eval() for e in acc_evaluators]
 
+def append_bn_repeat_init_op(main_prog, startup_prog, num_repeats):
+    repeat_vars = set()
+    for op in main_prog.global_block().ops:
+        if op.type == "batch_norm":
+            repeat_vars.add(op.input("Mean")[0])
+            repeat_vars.add(op.input("Variance")[0])
+    
+    for i in range(num_repeats):
+        for op in startup_prog.global_block().ops:
+            if op.type == "fill_constant":
+                for oname in op.output_arg_names:
+                    if oname in repeat_vars:
+                        var = startup_prog.global_block().var(oname)
+                        repeat_var_name = "%s.repeat.%d" % (oname, i)
+                        print("append init ops for ", repeat_var_name, var.shape)
+                        repeat_var = startup_prog.global_block().create_var(
+                            name=repeat_var_name,
+                            type=var.type,
+                            dtype=var.dtype,
+                            shape=var.shape,
+                            persistable=var.persistable
+                        )
+                        main_prog.global_block()._clone_variable(repeat_var)
+                        startup_prog.global_block().append_op(
+                            type="fill_constant",
+                            inputs={},
+                            outputs={"Out": repeat_var},
+                            attrs=op.all_attrs()
+                        )
+
+
 # NOTE: only need to benchmark using parallelexe
 def train_parallel(train_args, test_args, args, train_prog, test_prog,
                    startup_prog, nccl_id_var, num_trainers, trainer_id):
     over_all_start = time.time()
     place = core.CPUPlace() if args.device == 'CPU' else core.CUDAPlace(0)
-    feeder = None
-    if not args.use_reader_op:
-        feed_var_list = [
-            var for var in train_prog.global_block().vars.itervalues()
-            if var.is_data
-        ]
-        feeder = fluid.DataFeeder(feed_var_list, place)
 
     if nccl_id_var and trainer_id == 0:
         #FIXME(wuyi): wait other trainer to start listening
         time.sleep(30)
 
     startup_exe = fluid.Executor(place)
+    if args.multi_batch_repeat > 1:
+        append_bn_repeat_init_op(train_prog, startup_prog, args.multi_batch_repeat)
     startup_exe.run(startup_prog)
+    # init img_mean, img_std
+    img_mean_np = np.array([0.485, 0.456, 0.406]).astype("float32").reshape((3, 1, 1))
+    img_std_np = np.array([0.229, 0.224, 0.225]).astype("float32").reshape((3, 1, 1))
+    mean_var = fluid.global_scope().find_var("img_mean")
+    mean_var.get_tensor().set(img_mean_np, place)
+    std_var = fluid.global_scope().find_var("img_std")
+    std_var.get_tensor().set(img_std_np, place)
+
     strategy = fluid.ExecutionStrategy()
     strategy.num_threads = args.cpus
     strategy.allow_op_delay = False
@@ -205,79 +239,62 @@ def train_parallel(train_args, test_args, args, train_prog, test_prog,
         num_trainers=num_trainers,
         trainer_id=trainer_id)
 
-    if not args.no_test:
-        if args.update_method == "pserver":
-            test_scope = None
-        else:
-            # NOTE: use an empty scope to avoid test exe using NCCLID
-            test_scope = fluid.Scope()
-        test_exe = fluid.ParallelExecutor(
-            True, main_program=test_prog, share_vars_from=exe)
+    # if not args.no_test:
+    #     if args.update_method == "pserver":
+    #         test_scope = None
+    #     else:
+    #         # NOTE: use an empty scope to avoid test exe using NCCLID
+    #         test_scope = fluid.Scope()
+    #     test_exe = fluid.ParallelExecutor(
+    #         True, main_program=test_prog, share_vars_from=exe)
+
+    fetch_list = [avg_loss.name]
+    acc_name_list = [v.name for v in train_args[2]]
+    fetch_list.extend(acc_name_list)
 
     for pass_id in range(args.pass_num):
         num_samples = 0
-        iters = 0
         start_time = time.time()
-        if not args.use_reader_op:
-            reader_generator = train_args[3]()  #train_reader
         batch_id = 0
-        data = None
-        if args.use_reader_op:
-            train_args[4].start()
+        train_args[4].start()
         batch_time = time.time()
         while True:
-            if not args.use_reader_op:
-                data = next(reader_generator, None)
-                if data == None:
-                    break
-            if args.profile and batch_id == 5:
-                profiler.start_profiler("All")
-                profiler.reset_profiler()
-            elif args.profile and batch_id == 10:
-                print("profiling total time: ", time.time() - start_time)
-                profiler.stop_profiler("total", "/tmp/profile_%d_pass%d" %
-                                       (trainer_id, pass_id))
-            if iters == args.iterations:
+            # if args.profile and batch_id == 5:
+            #     profiler.start_profiler("All")
+            #     profiler.reset_profiler()
+            # elif args.profile and batch_id == 10:
+            #     print("profiling total time: ", time.time() - start_time)
+            #     profiler.stop_profiler("total", "/tmp/profile_%d_pass%d" %
+            #                            (trainer_id, pass_id))
+            # if batch_id == args.iterations:
+            #     break
+
+            # if batch_id == args.skip_batch_num:
+            #     start_time = time.time()
+            #     num_samples = 0
+
+            try:
+                if batch_id % 30 == 0:
+                    fetch_ret = exe.run(fetch_list)
+                else:
+                    exe.run([])
+            except fluid.core.EOFException as eof:
+                break
+            except fluid.core.EnforceNotMet as ex:
+                traceback.print_exc()
                 break
 
-            if iters == args.skip_batch_num:
-                start_time = time.time()
-                num_samples = 0
-            fetch_list = [avg_loss.name]
-            acc_name_list = [v.name for v in train_args[2]]
-            fetch_list.extend(acc_name_list)
+            num_samples += args.batch_size * args.gpus
 
-            if args.use_fake_data or args.use_reader_op:
-                try:
-                    if batch_id % 10 == 0:
-                        fetch_ret = exe.run(fetch_list)
-                    else:
-                        exe.run([])
-                except fluid.core.EOFException as eof:
-                    break
-                except fluid.core.EnforceNotMet as ex:
-                    traceback.print_exc()
-                    break
-            else:
-                fetch_ret = exe.run(fetch_list, feed=feeder.feed(data))
-            if args.use_reader_op:
-                num_samples += args.batch_size * args.gpus
-            else:
-                num_samples += len(data)
-
-            iters += 1
-            if batch_id % 10 == 0:
+            if batch_id % 30 == 0:
                 fetched_data = [np.mean(np.array(d)) for d in fetch_ret]
                 print("Pass %d, batch %d, loss %s, accucacys: %s, batch_time: %f" %
-                      (pass_id, batch_id, fetched_data[0], fetched_data[1:], (time.time() - batch_time) / 10.0))
+                      (pass_id, batch_id, fetched_data[0], fetched_data[1:], (time.time() - batch_time) / 30.0))
                 batch_time = time.time()
             batch_id += 1
 
         print_train_time(start_time, time.time(), num_samples)
-        if args.use_reader_op:
-            train_args[4].reset()  # reset reader handle
-        else:
-            del reader_generator
+        train_args[4].reset()  # reset reader handle
 
         if not args.no_test and test_args[2]:
             test_feeder = None
@@ -347,6 +364,8 @@ def main():
     test_args = list(model_def.get_model(args, False, test_prog, startup_prog))
 
     all_args = [train_args, test_args, args]
+    with open("/tmp/trainer_prog", "w") as fn:
+        fn.write(str(train_prog))
 
     if args.update_method == "pserver":
         if os.getenv("PADDLE_TRAINING_ROLE") == "TRAINER" and args.memory_optimize:

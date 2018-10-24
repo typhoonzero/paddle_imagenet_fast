@@ -34,6 +34,8 @@ def parse_args():
         '--batch_size', type=int, default=32, help='The minibatch size.')
     parser.add_argument(
         '--multi_batch_repeat', type=int, default=1, help='run multiple batches on a single GPU and merge.')
+    parser.add_argument(
+        '--use_lars', action='store_true', help='If set, use lars instead of normal momentum.')
     #  args related to learning rate
     parser.add_argument(
         '--learning_rate', type=float, default=0.001, help='The learning rate.')
