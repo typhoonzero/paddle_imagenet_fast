@@ -198,7 +198,7 @@ def _model_reader_dshape_classdim(args, is_train):
         if not args.use_reader_op:
             if is_train:
                 reader = reader_fast.create_imagenet_local_rawdatareader("train", "imagenet")
-                reader = reader_fast.transform_reader("train", reader)
+                reader = reader_fast.transform_reader("train", reader, process_tensor=not args.use_reader_uint8)
                 # reader = reader_fast.create_threaded_reader(reader)
             else:
                 reader = val()
@@ -206,7 +206,7 @@ def _model_reader_dshape_classdim(args, is_train):
             if is_train:
                 #reader = train()
                 reader = reader_fast.create_imagenet_local_rawdatareader("train", "imagenet")
-                reader = reader_fast.transform_reader("train", reader)
+                reader = reader_fast.transform_reader("train", reader, process_tensor=not args.use_reader_uint8)
                 # reader = reader_fast.create_threaded_reader(reader)
             else:
                 reader = val()
@@ -218,13 +218,18 @@ def get_model(args, is_train, main_prog, startup_prog):
 
     pyreader = None
     trainer_count = int(os.getenv("PADDLE_TRAINERS"))
+    if args.use_reader_uint8:
+        reader_dtype = "uint8"
+    else:
+        reader_dtype = "float32"
+
     with fluid.program_guard(main_prog, startup_prog):
         with fluid.unique_name.guard():
             if args.use_reader_op:
                 pyreader = fluid.layers.py_reader(
                     capacity=args.batch_size * args.gpus,
                     shapes=([-1] + dshape, (-1, 1)),
-                    dtypes=('uint8', 'int64'),
+                    dtypes=(reader_dtype, 'int64'),
                     name="train_reader" if is_train else "test_reader",
                     use_double_buffer=True)
                 input, label = fluid.layers.read_file(pyreader)
@@ -235,15 +240,16 @@ def get_model(args, is_train, main_prog, startup_prog):
                     name='label', shape=[1], dtype='int64')
 
             model = ResNet(is_train=is_train)
-            cast = fluid.layers.cast(input, "float32")
-            # setup values when run startup
-            img_mean = fluid.layers.create_global_var([3, 1, 1], 0.0, "float32", name="img_mean", persistable=True)
-            img_std = fluid.layers.create_global_var([3, 1, 1], 0.0, "float32", name="img_std", persistable=True)
+            if args.use_reader_uint8:
+                cast = fluid.layers.cast(input, "float32")
+                # setup values when run startup
+                img_mean = fluid.layers.create_global_var([3, 1, 1], 0.0, "float32", name="img_mean", persistable=True)
+                img_std = fluid.layers.create_global_var([3, 1, 1], 0.0, "float32", name="img_std", persistable=True)
 
-            # img_mean_np = np.array([0.485, 0.456, 0.406]).reshape((3, 1, 1))
-            # img_std_np = np.array([0.229, 0.224, 0.225]).reshape((3, 1, 1))
-            t1 = fluid.layers.elementwise_sub(cast / 255.0, img_mean, axis=1)
-            t2 = fluid.layers.elementwise_div(t1, img_std, axis=1)
+                t1 = fluid.layers.elementwise_sub(cast / 255.0, img_mean, axis=1)
+                t2 = fluid.layers.elementwise_div(t1, img_std, axis=1)
+            else:
+                t2 = input
             
             predict = model.net(t2, class_dim=class_dim)
             cost = fluid.layers.cross_entropy(input=predict, label=label)
@@ -303,7 +309,8 @@ def get_model(args, is_train, main_prog, startup_prog):
         pyreader.decorate_tensor_provider(
             reader_fast.batch_feeder(
                 paddle.batch(reader, batch_size=args.batch_size),
-                pin_memory=True
+                pin_memory=True,
+                img_dtype=reader_dtype
             )
         )
 

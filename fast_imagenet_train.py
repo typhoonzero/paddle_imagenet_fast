@@ -207,13 +207,14 @@ def train_parallel(train_args, test_args, args, train_prog, test_prog,
     if args.multi_batch_repeat > 1:
         append_bn_repeat_init_op(train_prog, startup_prog, args.multi_batch_repeat)
     startup_exe.run(startup_prog)
-    # init img_mean, img_std
-    img_mean_np = np.array([0.485, 0.456, 0.406]).astype("float32").reshape((3, 1, 1))
-    img_std_np = np.array([0.229, 0.224, 0.225]).astype("float32").reshape((3, 1, 1))
-    mean_var = fluid.global_scope().find_var("img_mean")
-    mean_var.get_tensor().set(img_mean_np, place)
-    std_var = fluid.global_scope().find_var("img_std")
-    std_var.get_tensor().set(img_std_np, place)
+    if args.use_reader_uint8:
+        # init img_mean, img_std
+        img_mean_np = np.array([0.485, 0.456, 0.406]).astype("float32").reshape((3, 1, 1))
+        img_std_np = np.array([0.229, 0.224, 0.225]).astype("float32").reshape((3, 1, 1))
+        mean_var = fluid.global_scope().find_var("img_mean")
+        mean_var.get_tensor().set(img_mean_np, place)
+        std_var = fluid.global_scope().find_var("img_std")
+        std_var.get_tensor().set(img_std_np, place)
 
     strategy = fluid.ExecutionStrategy()
     strategy.num_threads = args.cpus

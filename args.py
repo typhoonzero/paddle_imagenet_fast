@@ -36,6 +36,8 @@ def parse_args():
         '--multi_batch_repeat', type=int, default=1, help='run multiple batches on a single GPU and merge.')
     parser.add_argument(
         '--use_lars', action='store_true', help='If set, use lars instead of normal momentum.')
+    parser.add_argument(
+        '--use_reader_uint8', action='store_true', help='If set, reader feed uint8 data type for speed.')
     #  args related to learning rate
     parser.add_argument(
         '--learning_rate', type=float, default=0.001, help='The learning rate.')

@@ -153,7 +153,7 @@ def transform_reader(which,
     return newreader
 
 
-def batch_feeder(batch_reader, pin_memory=False):
+def batch_feeder(batch_reader, pin_memory=False, img_dtype="float32"):
     # batch((sample, label)) => batch(sample), batch(label)
     def _feeder():
         for batch_data in batch_reader():
@@ -165,7 +165,7 @@ def batch_feeder(batch_reader, pin_memory=False):
             tensor = core.LoDTensor()
             label = core.LoDTensor()
             place = core.CUDAPinnedPlace() if pin_memory else core.CPUPlace()
-            tensor.set(np.array(sample_batch, dtype="float32", copy=False), place)
+            tensor.set(np.array(sample_batch, dtype=img_dtype, copy=False), place)
             label.set(np.array(label_batch, dtype="int64", copy=False), place)
             yield [tensor, label]
 

@@ -135,9 +135,10 @@ def process_image(sample, mode, color_jitter, rotate):
     if img.mode != 'RGB':
         img = img.convert('RGB')
 
-    img = np.array(img).astype('float32').transpose((2, 0, 1)) / 255
-    img -= img_mean
-    img /= img_std
+    img = np.array(img).astype('uint8').transpose((2, 0, 1))
+    # img = np.array(img).astype('float32').transpose((2, 0, 1)) / 255
+    # img -= img_mean
+    # img /= img_std
 
     if mode == 'train' or mode == 'val':
         return img, sample[1]
