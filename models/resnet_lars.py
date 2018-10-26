@@ -309,7 +309,7 @@ def get_model(args, is_train, main_prog, startup_prog):
         pyreader.decorate_tensor_provider(
             reader_fast.batch_feeder(
                 paddle.batch(reader, batch_size=args.batch_size),
-                pin_memory=True,
+                pin_memory=args.pin_memory,
                 img_dtype=reader_dtype
             )
         )

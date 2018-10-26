@@ -38,10 +38,11 @@ def parse_args():
         '--use_lars', action='store_true', help='If set, use lars instead of normal momentum.')
     parser.add_argument(
         '--use_reader_uint8', action='store_true', help='If set, reader feed uint8 data type for speed.')
+    parser.add_argument(
+        '--pin_memory', action='store_true', help='If set, reader data in pin memory before copy to GPU.')
     #  args related to learning rate
     parser.add_argument(
         '--learning_rate', type=float, default=0.001, help='The learning rate.')
-    # TODO(wuyi): add "--use_fake_data" option back.
     parser.add_argument(
         '--skip_batch_num',
         type=int,
