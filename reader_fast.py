@@ -16,9 +16,9 @@ import paddle
 import paddle.fluid as fluid
 import paddle.fluid.core as core
 
-
 img_mean = np.array([0.485, 0.456, 0.406]).reshape((3, 1, 1))
 img_std = np.array([0.229, 0.224, 0.225]).reshape((3, 1, 1))
+
 def parse_kv(r):
     """ parse kv data from sequence file for imagenet
     """
@@ -94,6 +94,7 @@ def create_imagenet_local_datareader(which,
                 if count > maxloadnum:
                     break
     return reader
+
 def create_imagenet100_local_datareader(which):
     maxloadnum = -1
     DATA_DIR = '.'

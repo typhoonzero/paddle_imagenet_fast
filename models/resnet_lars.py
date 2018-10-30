@@ -286,7 +286,6 @@ def get_model(args, is_train, main_prog, startup_prog):
                                 boundaries=bd, values=lr),
                             warmup_steps, start_lr, end_lr),
                         momentum=0.9,
-                        #lars_weight_decay=1e-4)
                         regularization=fluid.regularizer.L2Decay(1e-4))
                 optimizer.minimize(avg_cost)
 

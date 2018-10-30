@@ -176,7 +176,6 @@ def append_bn_repeat_init_op(main_prog, startup_prog, num_repeats):
                     if oname in repeat_vars:
                         var = startup_prog.global_block().var(oname)
                         repeat_var_name = "%s.repeat.%d" % (oname, i)
-                        print("append init ops for ", repeat_var_name, var.shape)
                         repeat_var = startup_prog.global_block().create_var(
                             name=repeat_var_name,
                             type=var.type,
@@ -192,6 +191,17 @@ def append_bn_repeat_init_op(main_prog, startup_prog, num_repeats):
                             attrs=op.all_attrs()
                         )
 
+
+def copyback_repeat_bn_params(main_prog):
+    repeat_vars = set()
+    for op in main_prog.global_block().ops:
+        if op.type == "batch_norm":
+            repeat_vars.add(op.input("Mean")[0])
+            repeat_vars.add(op.input("Variance")[0])
+    for vname in repeat_vars:
+        real_var = fluid.global_scope().find_var("%s.repeat.0" % vname).get_tensor()
+        orig_var = fluid.global_scope().find_var(vname).get_tensor()
+        orig_var.set(np.array(real_var), fluid.CUDAPlace(0)) # test on GPU0
 
 # NOTE: only need to benchmark using parallelexe
 def train_parallel(train_args, test_args, args, train_prog, test_prog,
@@ -221,7 +231,12 @@ def train_parallel(train_args, test_args, args, train_prog, test_prog,
     strategy.allow_op_delay = False
 
     build_st = fluid.BuildStrategy()
-    build_st.multi_batch_merge_repeats = args.multi_batch_repeat
+    # build_st.multi_batch_merge_repeats = args.multi_batch_repeat
+    if args.multi_batch_repeat > 1:
+        pass_builder = build_st._create_passes_from_strategy()
+        mypass = pass_builder.insert_pass(
+            len(pass_builder.all_passes()) - 2, "multi_batch_merge_pass")
+        mypass.set_int("num_repeats", args.multi_batch_repeat)
     avg_loss = train_args[0]
 
     if args.update_method == "pserver":
@@ -305,9 +320,12 @@ def train_parallel(train_args, test_args, args, train_prog, test_prog,
                     if var.is_data
                 ]
                 test_feeder = fluid.DataFeeder(test_feed_var_list, place)
-            if pass_id >= 80:  # test only after pass 80 and ever 10 pass
+            if pass_id >= 80 or pass_id < 5:  # test only after pass 80 and first pass
                 #test_ret = test_parallel(test_exe, test_args, args, test_prog,
                 #                     test_feeder)
+                # copy BN mean/var to test program used BN vars.
+                if args.multi_batch_repeat > 1:
+                    copyback_repeat_bn_params(train_prog)
                 test_ret = test_single(startup_exe, test_args, args, test_prog, test_feeder)
                 print("Pass: %d, Test Accuracy: %s\n" %
                     (pass_id, [np.mean(np.array(v)) for v in test_ret]))

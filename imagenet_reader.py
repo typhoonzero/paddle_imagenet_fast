@@ -135,10 +135,10 @@ def process_image(sample, mode, color_jitter, rotate):
     if img.mode != 'RGB':
         img = img.convert('RGB')
 
-    img = np.array(img).astype('uint8').transpose((2, 0, 1))
-    # img = np.array(img).astype('float32').transpose((2, 0, 1)) / 255
-    # img -= img_mean
-    # img /= img_std
+    # img = np.array(img).astype('uint8').transpose((2, 0, 1))
+    img = np.array(img).astype('float32').transpose((2, 0, 1)) / 255
+    img -= img_mean
+    img /= img_std
 
     if mode == 'train' or mode == 'val':
         return img, sample[1]
@@ -283,37 +283,6 @@ def _reader_creator(file_list,
         process_image, mode=mode, color_jitter=color_jitter, rotate=rotate)
 
     return paddle.reader.xmap_readers(mapper, reader, THREAD, BUF_SIZE)
-
-
-def load_raw_image_uint8(sample):
-    img_arr = np.array(Image.open(sample[0])).astype('int64')
-    return img_arr, int(sample[1])
-
-
-def train_raw(file_list=TRAIN_LIST, shuffle=True):
-    def reader():
-        with open(file_list) as flist:
-            full_lines = [line.strip() for line in flist]
-            if shuffle:
-                random.shuffle(full_lines)
-
-            trainer_id = int(os.getenv("PADDLE_TRAINER_ID"))
-            trainer_count = int(os.getenv("PADDLE_TRAINERS"))
-            per_node_lines = len(full_lines) / trainer_count
-            lines = full_lines[trainer_id * per_node_lines:(trainer_id + 1) *
-                               per_node_lines]
-            print("read images from %d, length: %d, lines length: %d, total: %d"
-                  % (trainer_id * per_node_lines, per_node_lines, len(lines),
-                     len(full_lines)))
-
-            for line in lines:
-                img_path, label = line.split()
-                img_path = img_path.replace("JPEG", "jpeg")
-                img_path = os.path.join(DATA_DIR, "train", img_path)
-                yield (img_path, int(label))
-
-    return paddle.reader.xmap_readers(load_raw_image_uint8, reader, THREAD,
-                                      BUF_SIZE)
 
 
 def train(file_list=TRAIN_LIST, xmap=True):
