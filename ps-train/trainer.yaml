@@ -9,7 +9,7 @@ spec:
       labels: {paddle-job: ps-imagenet-bs32}
     spec:
       nodeSelector:
-        wuyinode: "2"
+        wuyinode: "1"
       containers:
       - command: [paddle_k8s, start_fluid]
         env:
@@ -35,9 +35,9 @@ spec:
         - {name: FLAGS_rpc_deadline, value: '36000000'}
         - {name: ENTRY, value: cd /workspace && unset http_proxy && unset https_proxy && NCCL_SOCKET_IFNAME=eth2 NCCL_IB_DISABLE=0
             NCCL_IB_GID_INDEX=3 NCCL_DEBUG=INFO python fast_imagenet_train.py --model
-            resnet_lars --data_set imagenet --gpus 8 --cpus 2 --update_method pserver --iterations
+            resnet_lars --data_set imagenet --gpus 8 --cpus 32 --update_method pserver --iterations
             -1 --batch_size 32 --pass_num 120 --data_path /mnt/ImageNet --test_data_path
-            /mnt/ImageNet --learning_rate 0.1 --use_reader_op --multi_batch_repeat 8}
+            /mnt/ImageNet --learning_rate 0.1 --use_reader_op --multi_batch_repeat 1 --use_reader_uint8 --pin_memory}
         - {name: PADDLE_PSERVER_PORT, value: '30236'}
         - {name: LD_LIBRARY_PATH, value: '/usr/local/lib:/usr/local/nvidia/lib64:/usr/local/rdma/lib64:/usr/lib64/mlnx_ofed/valgrind'}
         - {name: PADDLE_TRAINING_ROLE, value: TRAINER}

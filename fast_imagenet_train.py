@@ -138,10 +138,6 @@ def test_single(exe, test_args, args, test_prog, feeder):
         acc_evaluators.append(fluid.metrics.Accuracy())
 
     to_fetch = [v.name for v in test_args[2]]
-    # to_fetch.append("batch_norm_20.w_1")
-    # to_fetch.append("batch_norm_0.w_1")
-    # var = fluid.global_scope().find_var("batch_norm_0.w_1")
-    # print("batch_norm_0.w_1", fluid.executor.as_numpy(var.get_tensor()))
 
     if args.use_reader_op:
         test_args[4].start()
@@ -255,15 +251,6 @@ def train_parallel(train_args, test_args, args, train_prog, test_prog,
         num_trainers=num_trainers,
         trainer_id=trainer_id)
 
-    # if not args.no_test:
-    #     if args.update_method == "pserver":
-    #         test_scope = None
-    #     else:
-    #         # NOTE: use an empty scope to avoid test exe using NCCLID
-    #         test_scope = fluid.Scope()
-    #     test_exe = fluid.ParallelExecutor(
-    #         True, main_program=test_prog, share_vars_from=exe)
-
     fetch_list = [avg_loss.name]
     acc_name_list = [v.name for v in train_args[2]]
     fetch_list.extend(acc_name_list)
@@ -275,20 +262,6 @@ def train_parallel(train_args, test_args, args, train_prog, test_prog,
         train_args[4].start()
         batch_time = time.time()
         while True:
-            # if args.profile and batch_id == 5:
-            #     profiler.start_profiler("All")
-            #     profiler.reset_profiler()
-            # elif args.profile and batch_id == 10:
-            #     print("profiling total time: ", time.time() - start_time)
-            #     profiler.stop_profiler("total", "/tmp/profile_%d_pass%d" %
-            #                            (trainer_id, pass_id))
-            # if batch_id == args.iterations:
-            #     break
-
-            # if batch_id == args.skip_batch_num:
-            #     start_time = time.time()
-            #     num_samples = 0
-
             try:
                 if batch_id % 30 == 0:
                     fetch_ret = exe.run(fetch_list)
@@ -330,6 +303,7 @@ def train_parallel(train_args, test_args, args, train_prog, test_prog,
                 print("Pass: %d, Test Accuracy: %s\n" %
                     (pass_id, [np.mean(np.array(v)) for v in test_ret]))
 
+    startup_exe.close()
     print("total train time: ", time.time() - over_all_start)
 
 
