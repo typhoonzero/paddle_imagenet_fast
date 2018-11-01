@@ -303,7 +303,8 @@ def train_parallel(train_args, test_args, args, train_prog, test_prog,
                 print("Pass: %d, Test Accuracy: %s\n" %
                     (pass_id, [np.mean(np.array(v)) for v in test_ret]))
 
-    startup_exe.close()
+    if args.update_method == "pserver":
+        startup_exe.close()
     print("total train time: ", time.time() - over_all_start)
 
 
